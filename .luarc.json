@@ -1,4 +1,4 @@
 {
-  "workspace.library": ["./library"],
+  "workspace.library": ["./library"]
 }
 
