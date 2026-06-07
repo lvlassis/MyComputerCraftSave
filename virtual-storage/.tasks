@@ -1,0 +1,9 @@
+# vim: set fenc=utf-8 ft=taskini:
+# see: https://github.com/skywind3000/asynctasks.vim/wiki/Task-Config
+
+# define a new task named "file-build"
+[project-run]
+command=make dev
+output=terminal
+cwd=$(VIM_ROOT)
+save=2
