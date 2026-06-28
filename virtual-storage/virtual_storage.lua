@@ -1,14 +1,20 @@
--- Computercraft
+local Inventory = require("inventory")
+
 
 ---@class stack
+---@field item_name string
 ---@field inventory string
 ---@field slot integer
 ---@field count integer
+---@field maxCount integer
 
 -- Debug Library
 
 local log = {
   DEBUG = 0,
+  INFO = 1,
+  WARNING = 2,
+  ERROR = 3,
   level = 0,
   step_by_step = false,
   debug = function (log, s, breakpoint)
@@ -16,16 +22,24 @@ local log = {
     print(("DEBUG: %s"):format(s))
     if breakpoint then log.step_by_step = true end
     if log.step_by_step then read() end
+  end,
+  info = function (log, s)
+    if log.level > log.INFO then return end
+    print(("INFO: %s"):format(s))
   end
 }
+
+log.level = log.INFO
 
 -- Virtual Storage
 
 local CACHE_FILE = "status.json"
 
+local modem = peripheral.find("modem")
+
 local virtual_storage = {
   -- Nome da turtle que executa o programa
-  computer_label = "turtle_1",
+  computer_label = modem.getNameLocal(),
 
   -- Ajuda a encontrar os itens. Fazer list
   -- Formato { "minecraft:oak_planks" = { { inventory = "minecraft:chest_8", slot = 39, count = 30 }, { inventory = "minecraft:chest_7", slot = 29, count = 1 } } }
@@ -35,13 +49,17 @@ local virtual_storage = {
   _inventarios = {}
 }
 
+
 function virtual_storage:open()
+
   -- Carrega o cache
   self:load()
 
   -- Escaneia os inventários conectados
-  self:scan_inventarios()
+  self:_scan_inventarios()
+
 end
+
 
 function virtual_storage:close()
   -- Salva o cache
@@ -49,8 +67,10 @@ function virtual_storage:close()
 end
 
 
--- Retorna a lista de stacks do item buscado
-function virtual_storage:get_stacks(item_name)
+--- Retorna a lista de stacks do item buscado
+---@param item_name string
+---@return stack[]|nil
+function virtual_storage:_get_stacks(item_name)
   log:debug(("Get '%s'"):format(item_name))
   return self._itens[item_name] or nil
 end
@@ -66,6 +86,7 @@ function virtual_storage:load()
   end
 end
 
+
 function virtual_storage:save()
   local file = fs.open(CACHE_FILE, "w")
   if not file then return end
@@ -73,7 +94,7 @@ function virtual_storage:save()
 end
 
 
-function virtual_storage:scan_inventarios()
+function virtual_storage:_scan_inventarios()
   -- Mapear os inventarios
   log:debug("Escaneando inventarios...")
 
@@ -82,16 +103,16 @@ function virtual_storage:scan_inventarios()
   log:debug(("Encontrado: %d perifericos..."):format(#perifericos - 1))
 
   -- Salva o resultado
-  for _, p in ipairs(perifericos) do
-    if peripheral.hasType(p, "inventory") then
-      self._inventarios[p] = peripheral.wrap(p)
+  for _, network_id in ipairs(perifericos) do
+    if peripheral.hasType(network_id, "inventory") then
+      self._inventarios[network_id] = peripheral.wrap(network_id)
     end
   end
 end
 
 
 function virtual_storage:scan()
-  self:scan_inventarios()
+  self:_scan_inventarios()
 
   -- Mapear os itens
   log:debug("Mapeando itens...")
@@ -100,8 +121,15 @@ function virtual_storage:scan()
     local inv_items = inv.list()
     for slot, item in pairs(inv_items) do
       -- print(name, slot, item.name, item.count)
+      local itemDetail = inv.getItemDetail(slot)
       self._itens[item.name] = self._itens[item.name] or {}
-      table.insert(self._itens[item.name], { inventory = name, slot = slot, count = item.count })
+      table.insert(self._itens[item.name], {
+        item_name = item.name,
+        inventory = name,
+        slot = slot,
+        count = item.count,
+        maxCount = itemDetail.maxCount
+      })
     end
   end
 
@@ -129,11 +157,23 @@ function virtual_storage:list_itens()
 end
 
 
+local function _limpa_inventario_turtle()
+  for i = 1, 16 do
+    if turtle.getItemCount(i) > 0 then
+      turtle.select(i)
+      log:debug("Executa drop da morte 2")
+      turtle.drop()
+    end
+  end
+  turtle.select(1)
+end
+
+
 --- Informa quais as movimentações necessárias para se retirar "count" itens de uma lista de stacks
 ---@param stacks stack[]
 ---@param count integer
 ---@return stack[]
-function virtual_storage:get_pull_moves(stacks, count)
+function virtual_storage:_get_pull_moves(stacks, count)
   log:debug("Function: get_pull_moves")
   if count then
     log:debug(("Count: %d"):format(count))
@@ -180,7 +220,7 @@ function virtual_storage:get_inventory(inventory_name)
 end
 
 
-function virtual_storage:pull_cached(inventory_name, slot, count)
+function virtual_storage:_pull_cached(inventory_name, slot, count)
   -- Encontra o inventário
   local source = self:get_inventory(inventory_name)
 
@@ -191,7 +231,7 @@ function virtual_storage:pull_cached(inventory_name, slot, count)
   -- Encontra no cache de qual stack é que estamos pegando
   log:debug(("Procurando: %s, slot %d"):format(inventory_name, slot))
   local encontrou = false
-  local stacks = self:get_stacks(item_name)
+  local stacks = self:_get_stacks(item_name)
   for i, stack in ipairs(stacks) do
     log:debug(("Stack %d: %s, slot %d"):format(i, stack.inventory, stack.slot))
     if stack.inventory == inventory_name and stack.slot == slot then
@@ -225,36 +265,47 @@ function virtual_storage:pull_cached(inventory_name, slot, count)
 
   -- Realiza o pull
   source.pushItems(self.computer_label, slot, count)
+  log:debug("Executa drop da morte 1")
+  turtle.drop()
+end
+
+
+function virtual_storage:empty()
+  log:info("Running: empty")
+  -- Executa pull para cada um dos itens
+  for item_name, _ in pairs(self._itens) do
+    self:pull(item_name)
+  end
 end
 
 
 function virtual_storage:pull(item_name, count)
-  log:debug(("Running: pull %s"):format(item_name))
+  log:info(("Running: pull %s"):format(item_name))
+
+  -- Garante que não há itens no output
+  _limpa_inventario_turtle()
 
   -- Encontra as stacks com os itens
-  local stacks = self:get_stacks(item_name)
+  local stacks = self:_get_stacks(item_name)
   if not stacks then
     print("Item n encontrado: " .. item_name)
     return false
   end
 
   -- Encontra quais movimentações serão necessárias realizar
-  local movimentacoes = virtual_storage:get_pull_moves(stacks, count)
+  local movimentacoes = virtual_storage:_get_pull_moves(stacks, count)
   local movimentacoes_string = textutils.serialise(movimentacoes, {compact = true})
   log:debug(("Movimentacoes:\n%s"):format(movimentacoes_string))
 
-  -- Realiza as movimentações
-  for i = #movimentacoes, 1, -1 do
+  -- Realiza as movimentações 
+  for i = #movimentacoes, 1, -1 do -- Itera de trás para frente
     local move = movimentacoes[i]
-    self:pull_cached(move.inventory, move.slot, move.count)
-
-    -- Atualiza o cache
-    -- table.remove(stacks, 1)
+    self:_pull_cached(move.inventory, move.slot, move.count)
   end
 end
 
 
-function virtual_storage:get_contents_table()
+function virtual_storage:_get_contents_table()
   --[[ Returns:
   {
     "item_name" = { count = ??? },
@@ -280,14 +331,81 @@ function virtual_storage:get_contents_table()
 end
 
 
-function virtual_storage:push()
+--- Encontra quantos slots com certo item possuem espaços livres
+--- @param item_name string
+--- @return integer espaco_total Quantidade de itens livres
+--- @return table|nil inventarios_disponiveis Quais inventários que possuem esses slots
+function virtual_storage:_free_space_with(item_name)
+  -- Encontrar as stacks do mesmo item
+  local same_item_stacks = self:_get_stacks(item_name)
+  if not same_item_stacks then return 0, nil end
 
+  -- Encontrar espaços disponíveis nas stacks 
+  local espaco_total = 0
+  local inventarios_disponiveis = {}
+  for _, stack in ipairs(same_item_stacks) do
+    local espaco_livre = stack.maxCount - stack.count
+    espaco_total = espaco_total + espaco_livre
+    if espaco_livre > 0 then
+      inventarios_disponiveis[stack.inventory] = true
+    end
+  end
+
+  return espaco_total, inventarios_disponiveis
 end
 
 
-function virtual_storage:list()
-
+--- Encontra quantos slots estão vazios
+--- @return integer empty_slots Quantidade de slots vazios
+--- @return table|nil inventory_sources Quais inventários que possuem slots vazios
+function virtual_storage:_empty_slots()
+  local inventory_sources = {}
+  local empty_slots = 0
+  for name, inventory in pairs(self._inventarios) do
+    local vazios = inventory.size() - #inventory.list()
+    empty_slots = empty_slots + vazios
+    if vazios > 0 then
+      inventory_sources[name] = true
+    end
+  end
+  return empty_slots, inventory_sources
 end
+
+
+--- Envia o item de "input_slot" para o sistema
+---@param input_slot integer
+function virtual_storage:push(input_slot)
+
+  -- Encontrar o nome do item e quantidade -> Converter em stack
+  local item_detail =  turtle.getItemDetail(input_slot)
+  if not item_detail then
+    error(("Slot %d está vazio"):format(input_slot))
+  end
+  local input_item_name = item_detail.name
+  local input_count = item_detail.count
+  local input_max_count = item_detail.count + turtle.getItemSpace()
+
+  -- Verificar se há espaços disponiveis
+  local espaco_total = 0
+  local espaco_slots, inventarios_disponiveis = virtual_storage:_free_space_with(input_item_name)
+  espaco_total = espaco_total + espaco_slots
+
+  local empty_slots, inventory_sources = virtual_storage:_empty_slots()
+  espaco_total = espaco_total + empty_slots * input_max_count
+
+
+
+  log:info(("Espaco Total: %s"):format(espaco_total))
+
+  -- Encontrar espaço disponível em geral 
+  for inventory_id, inventory in pairs(self._inventarios) do
+    
+  end
+
+  -- Fazer a conta para ver se há espaço disponível para a transação
+  -- Realizar as movimentações
+  
+end
+
 
 return virtual_storage
-

@@ -33,8 +33,16 @@ local actions = {
     vs:pull(item_name, tonumber(count))
   end,
 
+  ["empty"] = function ()
+    vs:empty()
+  end,
+
   ["contents"] = function()
     print(textutils.serialise(vs:get_contents_table()))
+  end,
+
+  ["push"] = function (input_slot)
+    vs:push(tonumber(input_slot))
   end
 
 }
