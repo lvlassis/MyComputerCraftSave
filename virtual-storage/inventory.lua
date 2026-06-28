@@ -12,14 +12,29 @@ function Inventory:new(network_id)
   local t = {}
   t.network_id = network_id
   t.api = peripheral.wrap(network_id)
-  t.list = t.api.list()
-  return t
+  t.content = t.api.list()
+  t.__classname = "Inventory"
+  return setmetatable(t, self)
 end
 
+function Inventory:instantiate_from_data(data)
+  return Inventory:new(
+      data.network_id
+    )
+end
+
+
 ---Retorna o número de slots vazios do inventário
----@return number 
+---@return number
 function Inventory:free()
-  return self.api.size() - #self.list
+  return self.api.size() - #self.content
+end
+
+function Inventory:state()
+  return {
+    self.network_id,
+    self.content
+  }
 end
 
 return Inventory

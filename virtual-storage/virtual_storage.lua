@@ -1,12 +1,6 @@
+local ct = require("class_tools")
 local Inventory = require("inventory")
-
-
----@class stack
----@field item_name string
----@field inventory string
----@field slot integer
----@field count integer
----@field maxCount integer
+local Stack = require("stack")
 
 -- Debug Library
 
@@ -29,7 +23,7 @@ local log = {
   end
 }
 
-log.level = log.INFO
+log.level = log.DEBUG
 
 -- Virtual Storage
 
@@ -45,7 +39,7 @@ local virtual_storage = {
   -- Formato { "minecraft:oak_planks" = { { inventory = "minecraft:chest_8", slot = 39, count = 30 }, { inventory = "minecraft:chest_7", slot = 29, count = 1 } } }
   _itens = {},
 
-  -- Formato { "minecraft:chest_8" = peripheral.wrap("minecraft:chest_8") }
+  -- Formato { "minecraft:chest_8" = Inventory:new("minecraft:chest_8") }
   _inventarios = {}
 }
 
@@ -55,9 +49,7 @@ function virtual_storage:open()
   -- Carrega o cache
   self:load()
 
-  -- Escaneia os inventários conectados
-  self:_scan_inventarios()
-
+  self.computer_label = modem.getNameLocal()
 end
 
 
@@ -69,7 +61,7 @@ end
 
 --- Retorna a lista de stacks do item buscado
 ---@param item_name string
----@return stack[]|nil
+---@return Stack[]|nil
 function virtual_storage:_get_stacks(item_name)
   log:debug(("Get '%s'"):format(item_name))
   return self._itens[item_name] or nil
@@ -81,7 +73,14 @@ function virtual_storage:load()
   if itens_file then
     local content = itens_file.readAll()
     if not content then return end
-    self._itens = textutils.unserialize(content)
+
+    local vs_data = ct.unserialize(content)
+    if not vs_data then return end
+
+    for key, value in pairs(vs_data) do
+      self[key] = value
+    end
+
     itens_file.close()
   end
 end
@@ -90,11 +89,15 @@ end
 function virtual_storage:save()
   local file = fs.open(CACHE_FILE, "w")
   if not file then return end
-  file.write(textutils.serialize(self._itens))
+
+  local data = ct.serialize(self)
+
+  file.write(data)
+  file.close()
 end
 
 
-function virtual_storage:_scan_inventarios()
+function virtual_storage:_scan_inventories()
   -- Mapear os inventarios
   log:debug("Escaneando inventarios...")
 
@@ -105,33 +108,43 @@ function virtual_storage:_scan_inventarios()
   -- Salva o resultado
   for _, network_id in ipairs(perifericos) do
     if peripheral.hasType(network_id, "inventory") then
-      self._inventarios[network_id] = peripheral.wrap(network_id)
+      self._inventarios[network_id] = Inventory:new(network_id)
+    end
+  end
+end
+
+
+function virtual_storage:_scan_stacks()
+  -- Mapear os itens
+  log:debug("Escaneando stacks de itens...")
+
+  self._itens = {}
+  for network_id, inv in pairs(self._inventarios) do
+
+    for slot, item in pairs(inv.content) do
+      local itemDetail = inv.api.getItemDetail(slot)
+
+      -- Inicializa a lista de stacks do item caso não exista
+      self._itens[item.name] = self._itens[item.name] or {}
+
+      -- Insere a Stack na lista do item
+      table.insert(self._itens[item.name],
+        Stack:new(
+          item.name,
+          item.count,
+          itemDetail.maxCount,
+          network_id,
+          slot
+        )
+      )
     end
   end
 end
 
 
 function virtual_storage:scan()
-  self:_scan_inventarios()
-
-  -- Mapear os itens
-  log:debug("Mapeando itens...")
-  self._itens = {}
-  for name, inv in pairs(self._inventarios) do
-    local inv_items = inv.list()
-    for slot, item in pairs(inv_items) do
-      -- print(name, slot, item.name, item.count)
-      local itemDetail = inv.getItemDetail(slot)
-      self._itens[item.name] = self._itens[item.name] or {}
-      table.insert(self._itens[item.name], {
-        item_name = item.name,
-        inventory = name,
-        slot = slot,
-        count = item.count,
-        maxCount = itemDetail.maxCount
-      })
-    end
-  end
+  self:_scan_inventories()
+  self:_scan_stacks()
 
   log:debug(("Salvando %s..."):format(CACHE_FILE))
   self:save()
@@ -140,18 +153,18 @@ end
 
 function virtual_storage:list_inventarios()
   -- Listar os inventarios encontrados
-  for name, p in pairs(self._inventarios) do
-    print(name)
+  for _, inventory in pairs(self._inventarios) do
+    print(inventory.network_id)
   end
 end
 
 
 function virtual_storage:list_itens()
   -- Listar os itens encontrados
-  for name, inv in pairs(self._itens) do
+  for name, stack_list in pairs(self._itens) do
     print(name)
-    for i, item in ipairs(inv) do
-      print("  ", item.inventory, item.slot, item.count)
+    for _, stack in ipairs(stack_list) do
+      print("  ", stack.inventory_id, stack.slot, stack.count)
     end
   end
 end
@@ -170,9 +183,9 @@ end
 
 
 --- Informa quais as movimentações necessárias para se retirar "count" itens de uma lista de stacks
----@param stacks stack[]
+---@param stacks Stack[]
 ---@param count integer
----@return stack[]
+---@return Stack[]
 function virtual_storage:_get_pull_moves(stacks, count)
   log:debug("Function: get_pull_moves")
   if count then
@@ -192,7 +205,7 @@ function virtual_storage:_get_pull_moves(stacks, count)
     if stack.count >= count then
       -- Se a stack analizada já possui a quantidade, tire apenas o necessário e acabou
       local move = {
-        inventory = stack.inventory,
+        inventory_id = stack.inventory_id,
         slot = stack.slot,
         count = count,
       }
@@ -215,8 +228,8 @@ function virtual_storage:_get_pull_moves(stacks, count)
 end
 
 
-function virtual_storage:get_inventory(inventory_name)
-  return self._inventarios[inventory_name] or error(("Inventario '%s' nao existe"):format(inventory_name))
+function virtual_storage:get_inventory(network_id)
+  return self._inventarios[network_id] or error(("Inventario '%s' nao existe"):format(network_id))
 end
 
 
@@ -225,7 +238,7 @@ function virtual_storage:_pull_cached(inventory_name, slot, count)
   local source = self:get_inventory(inventory_name)
 
   -- Encontra qual o item_name
-  local item_name = source.getItemDetail(slot).name
+  local item_name = source.api.getItemDetail(slot).name
 
   -- Atualiza o cache
   -- Encontra no cache de qual stack é que estamos pegando
@@ -233,8 +246,8 @@ function virtual_storage:_pull_cached(inventory_name, slot, count)
   local encontrou = false
   local stacks = self:_get_stacks(item_name)
   for i, stack in ipairs(stacks) do
-    log:debug(("Stack %d: %s, slot %d"):format(i, stack.inventory, stack.slot))
-    if stack.inventory == inventory_name and stack.slot == slot then
+    log:debug(("Stack %d: %s, slot %d"):format(i, stack.inventory_id, stack.slot))
+    if stack.inventory_id == inventory_name and stack.slot == slot then
       log:debug("Encontrou")
       encontrou = true
       stack.count = stack.count - count -- Atualiza o cache
@@ -260,12 +273,11 @@ function virtual_storage:_pull_cached(inventory_name, slot, count)
   -- - Vai possivelmente dobrar o tamanho do arquivo de cache.
 
   if not encontrou then
-    error(("Nao encontrado: Stack {inventory: %s, slot: %d}, abortando pull"))
+    error(("Nao encontrado: Stack {inventory: %s, slot: %d}, abortando pull"):format(inventory_name, slot))
   end
 
   -- Realiza o pull
-  source.pushItems(self.computer_label, slot, count)
-  log:debug("Executa drop da morte 1")
+  source.api.pushItems(self.computer_label, slot, count)
   turtle.drop()
 end
 
@@ -300,7 +312,7 @@ function virtual_storage:pull(item_name, count)
   -- Realiza as movimentações 
   for i = #movimentacoes, 1, -1 do -- Itera de trás para frente
     local move = movimentacoes[i]
-    self:_pull_cached(move.inventory, move.slot, move.count)
+    self:_pull_cached(move.inventory_id, move.slot, move.count)
   end
 end
 
@@ -362,7 +374,7 @@ function virtual_storage:_empty_slots()
   local inventory_sources = {}
   local empty_slots = 0
   for name, inventory in pairs(self._inventarios) do
-    local vazios = inventory.size() - #inventory.list()
+    local vazios = inventory.api.size() - #inventory.api.list()
     empty_slots = empty_slots + vazios
     if vazios > 0 then
       inventory_sources[name] = true
@@ -398,9 +410,9 @@ function virtual_storage:push(input_slot)
   log:info(("Espaco Total: %s"):format(espaco_total))
 
   -- Encontrar espaço disponível em geral 
-  for inventory_id, inventory in pairs(self._inventarios) do
-    
-  end
+  -- for inventory_id, inventory in pairs(self._inventarios) do
+  --
+  -- end
 
   -- Fazer a conta para ver se há espaço disponível para a transação
   -- Realizar as movimentações
