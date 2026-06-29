@@ -1,6 +1,9 @@
+-- Libraries
+
 local ct = require("class_tools")
 local Inventory = require("inventory")
 local Stack = require("stack")
+local log = require("debug")
 
 -- Debug Library
 
@@ -25,7 +28,7 @@ local log = {
 
 log.level = log.DEBUG
 
--- Virtual Storage
+-- Virtual Storage --
 
 local CACHE_FILE = "status.json"
 
@@ -45,7 +48,6 @@ local virtual_storage = {
 
 
 function virtual_storage:open()
-
   -- Carrega o cache
   self:load()
 
@@ -108,7 +110,9 @@ function virtual_storage:_scan_inventories()
   -- Salva o resultado
   for _, network_id in ipairs(perifericos) do
     if peripheral.hasType(network_id, "inventory") then
-      self._inventarios[network_id] = Inventory:new(network_id)
+      local inventory = Inventory:new(network_id)
+      inventory:scan()
+      self._inventarios[network_id] = inventory
     end
   end
 end
@@ -277,7 +281,7 @@ function virtual_storage:_pull_cached(inventory_name, slot, count)
   end
 
   -- Realiza o pull
-  source.api.pushItems(self.computer_label, slot, count)
+  source:pullItems(self.computer_label, slot, count)
   turtle.drop()
 end
 

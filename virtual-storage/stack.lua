@@ -1,6 +1,6 @@
 ---@class Stack
 ---@field item_name string
----@field inventory string
+---@field inventory_id string
 ---@field slot integer
 ---@field count integer
 ---@field maxCount integer
