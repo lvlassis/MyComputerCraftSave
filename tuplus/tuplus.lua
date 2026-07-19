@@ -4,7 +4,7 @@
 ]]
 
 local tuplus = {}
-tuplus.__version__ = 1.2
+tuplus.__version__ = 2.1
 
 
 -- Imports
@@ -193,7 +193,7 @@ tuplus.gpsFindDirection = function()
         tuplus.turnLeft()
         tries = tries + 1
         if tries > 3 then
-            tryDig()
+            tuplus.tryDig()
             break
         end
     end
@@ -215,6 +215,7 @@ tuplus.orientateFacing = function(option)
     end
     tuplus.setFacing(facing_direction)
     tuplus.saveFacing()
+    return true
 end
 
 
@@ -247,6 +248,7 @@ tuplus.orientatePosition = function(option)
     end
     tuplus.setPosition(position)
     tuplus.savePosition()
+    return true
 end
 
 
@@ -261,8 +263,9 @@ end
 
 --To orientate
 tuplus.orientate = function(option)
-    tuplus.orientateFacing(option)
-    tuplus.orientatePosition(option)
+    local success_facing = tuplus.orientateFacing(option)
+    local success_position = tuplus.orientatePosition(option)
+    return success_facing and success_position
 end
 
 
@@ -291,6 +294,7 @@ end
 
 
 tuplus.turnTo = function(targetDirection)
+    targetDirection = targetDirection % 4
     while tuplus.getFacing() ~= targetDirection do
         if tuplus.facingDistance(tuplus.getFacing(), targetDirection) > 1 then
             tuplus.turnLeft()
@@ -831,8 +835,10 @@ tuplus.isBlockDown = function(block_name)
 end
 
 
-tuplus.distanceToMe = function(final_pos)
-    local diff_vector = final_pos - (tuplus.getPosition() + vector.new(0.5, 0.5, 0.5))
+tuplus.distanceTo = function(final_pos)
+    local vmt = getmetatable(vector.new(0, 0, 0))
+    setmetatable(final_pos, vmt)
+    local diff_vector = final_pos - tuplus.getPosition()
     return diff_vector:length()
 end
 
